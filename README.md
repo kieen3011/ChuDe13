@@ -1,2 +1,2 @@
 # ChuDe13
-Quản lí chi tiêu chia sẻ (share háo đơn)
+Quản lí chi tiêu chia sẻ (share hóa đơn)
