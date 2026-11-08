@@ -20,33 +20,65 @@ Group Expense Manager hướng đến việc hỗ trợ các thành viên trong 
 ## 3. Cấu trúc dự án
 
 ```text
-ChuDe13/
-├── database/
-│   └── (SQLite database - không đưa lên GitHub)
-├── docs/
-│   ├── architecture.md
-│   ├── data_dictionary.md
-│   └── database_design.md
-├── src/
-│   ├── create_tables.py
-│   ├── expense_service.py
-│   ├── expense_split.py
-│   ├── main.py
-│   ├── migrate_add_dispute_resolution.py
-│   ├── migrate_add_group_leader.py
-│   └── settlement_service.py
-├── tests/
-│   ├── database_test.py
-│   ├── test_debt_simplification.py
-│   ├── test_expense_service.py
-│   ├── test_expense_service_errors.py
-│   ├── test_expense_split.py
-│   ├── test_expense_split_integration.py
-│   ├── test_net_balance.py
-│   └── test_settlement_workflow.py
-├── .gitignore
-├── CONTRIBUTING.md
-└── README.md
+
+GroupExpenseManager/
+│
+├── database/                       # DATABASE
+│   └── group_expense.db            # SQLite database (không push lên GitHub)
+│
+├── docs/                           # TÀI LIỆU KỸ THUẬT VÀ DỰ ÁN
+│   ├── architecture.md             # Kiến trúc tổng thể, cách các module kết nối
+│   ├── database_design.md          # Thiết kế database, bảng và quan hệ
+│   ├── data_dictionary.md          # Giải thích các trường dữ liệu
+│   │
+│   ├── gui_ux/                     # TÀI LIỆU THIẾT KẾ GIAO DIỆN
+│   │   ├── user_flow/              # Luồng thao tác của người dùng
+│   │   ├── wireframes/             # Bản phác thảo bố cục giao diện
+│   │   ├── screenshots/            # Ảnh giao diện đã triển khai
+│   │   ├── design_guidelines.md    # Màu sắc, font, nút, quy chuẩn UI
+│   │   └── README.md               # Hướng dẫn và trạng thái GUI/UX
+│   │
+│   ├── diagrams/                   # SƠ ĐỒ HỆ THỐNG
+│   │   └── README.md               # ERD, DFD, UML và mô tả sơ đồ
+│   │
+│   └── reports/                    # BÁO CÁO VÀ THUYẾT TRÌNH
+│       └── README.md               # Hướng dẫn lưu báo cáo, slide
+│
+├── src/                            # MÃ NGUỒN ỨNG DỤNG
+│   ├── create_tables.py            # Tạo cấu trúc các bảng database
+│   ├── expense_service.py          # Xử lý nghiệp vụ khoản chi
+│   ├── expense_split.py             # Logic chia khoản chi
+│   ├── settlement_service.py       # Tính toán và xử lý quyết toán
+│   ├── main.py                     # Điểm khởi chạy ứng dụng
+│   │
+│   ├── gui/                        # GIAO DIỆN NGƯỜI DÙNG
+│   │   └── README.md               # Hướng dẫn cấu trúc và kết nối GUI
+│   │
+│   ├── integrations/               # TÍCH HỢP DỊCH VỤ BÊN NGOÀI
+│   │   └── vietqr/
+│   │       └── README.md           # Hướng dẫn tích hợp VietQR
+│   │
+│   └── exports/                    # XUẤT DỮ LIỆU
+│       └── README.md               # Hướng dẫn xuất CSV và Excel
+│
+├── tests/                          # KIỂM THỬ
+│   ├── test_expense_split.py       # Test logic chia khoản chi
+│   ├── test_expense_service.py     # Test nghiệp vụ khoản chi
+│   ├── test_settlement_workflow.py # Test quy trình quyết toán
+│   │
+│   ├── gui/                        # Test giao diện
+│   └── integrations/               # Test VietQR và xuất dữ liệu
+│
+├── assets/                         # TÀI NGUYÊN GIAO DIỆN
+│   ├── images/                     # Hình ảnh sử dụng trong ứng dụng
+│   ├── icons/                      # Icon và biểu tượng
+│   └── screenshots/                # Ảnh minh họa sản phẩm
+│
+├── README.md                       # Giới thiệu và hướng dẫn sử dụng dự án
+├── CONTRIBUTING.md                 # Quy định đóng góp và làm việc nhóm
+├── requirements.txt                # Danh sách thư viện Python cần cài
+└── .gitignore                      # Những file Git không được theo dõi
+
 ```
 
 ## 4. Yêu cầu môi trường
