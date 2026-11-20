@@ -1,0 +1,30 @@
+{
+  "generated_at": "2026-11-20T17:04:48.929419+00:00",
+  "summary": {
+    "total_records": 7,
+    "total_breaches": 4,
+    "total_ok": 2,
+    "total_errors": 1
+  },
+  "breaches_by_location": {
+    "KhuVuc-A": 2,
+    "KhuVuc-B": 1,
+    "UNKNOWN": 1
+  },
+  "breaches_by_severity": {
+    "CRITICAL": 2,
+    "WARNING": 2
+  },
+  "breaches_by_location_and_severity": {
+    "KhuVuc-A": {
+      "CRITICAL": 1,
+      "WARNING": 1
+    },
+    "KhuVuc-B": {
+      "WARNING": 1
+    },
+    "UNKNOWN": {
+      "CRITICAL": 1
+    }
+  }
+}
