@@ -1,3 +1,4 @@
+import copy
 import csv
 import re
 import unicodedata
@@ -6,20 +7,20 @@ from typing import Optional
 import pandas as pd
 import qrcode
 
-# Mã BIN ngân hàng chuẩn NAPAS
+# Chỉ sử dụng 5 ngân hàng theo danh sách tài khoản của nhóm (chuẩn BIN NAPAS)
 BANK_BINS = {
-    "VCB": "970436",   # Vietcombank
-    "MB": "970422",    # MBBank
-    "TCB": "970407",   # Techcombank
-    "BIDV": "970418",  # BIDV
-    "VTB": "970415",   # VietinBank
-    "ACB": "970416",   # ACB
-    "VPB": "970432",   # VPBank
+    "TCB": "970407",          # Techcombank
+    "TECHCOMBANK": "970407",
+    "ACB": "970416",          # ACB
+    "TPB": "970423",          # TPBank
+    "TPBANK": "970423",
+    "MB": "970422",           # MBBank
+    "TIMO": "963388",         # Timo by BVBank
 }
 
 
 # ==============================================================================
-# 1. TÍNH NĂNG TẠO MÃ VIETQR CHUẨN NGÂN HÀNG (SỬ DỤNG THƯ VIỆN QRCODE)
+# 1. TẠO MÃ VIETQR CHUẨN NGÂN HÀNG & THANH TOÁN LẦN LƯỢT TỪNG NGƯỜI
 # ==============================================================================
 def _chuan_hoa_noi_dung(text: str) -> str:
     """Chuyển tiếng Việt có dấu thành không dấu, bỏ ký tự đặc biệt cho nội dung CK."""
@@ -47,10 +48,7 @@ def tao_ma_vietqr(
     note: str = "Thanh toan no nhom",
     save_path: Optional[str] = None,
 ):
-    """
-    Tự động sinh mã QR chuyển khoản chuẩn ngân hàng (NAPAS 247) kèm số tiền & nội dung.
-    Trả về đối tượng ảnh PIL để gắn trực tiếp lên giao diện.
-    """
+    """Sinh 1 ảnh mã VietQR chuẩn ngân hàng (NAPAS 247) kèm số tiền & nội dung."""
     if not bank_code or not str(bank_code).strip():
         raise ValueError("Mã ngân hàng không được để trống.")
     if not account_no or not str(account_no).strip():
@@ -58,7 +56,9 @@ def tao_ma_vietqr(
     if amount is None or amount <= 0:
         raise ValueError("Số tiền thanh toán phải lớn hơn 0.")
 
-    bin_code = BANK_BINS.get(bank_code.strip().upper(), bank_code.strip())
+    # Chuẩn hóa tên ngân hàng (ví dụ: 'tp bank' -> 'TPBANK')
+    normalized_bank = re.sub(r"\s+", "", str(bank_code).strip().upper())
+    bin_code = BANK_BINS.get(normalized_bank, normalized_bank)
     if not (bin_code.isdigit() and len(bin_code) == 6):
         raise ValueError(f"Mã ngân hàng không hợp lệ: {bank_code}")
 
@@ -69,7 +69,6 @@ def tao_ma_vietqr(
     clean_amt = str(int(round(amount)))
     clean_note = _chuan_hoa_noi_dung(note)
 
-    # Đóng gói chuỗi dữ liệu EMVCo VietQR
     tlv = lambda tag, val: f"{tag}{len(val):02d}{val}"
     merchant_info = (
         tlv("00", "A000000727")
@@ -95,6 +94,83 @@ def tao_ma_vietqr(
     return qr_img
 
 
+def tao_qr_cho_tung_nguoi(
+    settlements: list,
+    output_dir: str = "exports/qr_thanh_toan",
+) -> list:
+    """
+    Sinh riêng từng mã VietQR cho TẤT CẢ các giao dịch trả nợ trong danh sách.
+    Mỗi giao dịch có thêm 'qr_image' (ảnh PIL) và 'qr_path' (đường dẫn file PNG).
+    """
+    Path(output_dir).mkdir(parents=True, exist_ok=True)
+    ket_qua = []
+
+    for idx, item in enumerate(settlements, start=1):
+        giao_dich = copy.deepcopy(item)
+        nguoi_tra = giao_dich["from_user"]
+        nguoi_nhan = giao_dich["to_user"]
+        so_tien = giao_dich["amount"]
+        noi_dung = f"{nguoi_tra} chuyen tien cho {nguoi_nhan}"
+
+        ten_file = f"{idx:02d}_{_chuan_hoa_noi_dung(nguoi_tra)}_chuyen_{_chuan_hoa_noi_dung(nguoi_nhan)}.png".replace(" ", "_")
+        duong_dan = f"{output_dir}/{ten_file}"
+
+        qr_img = tao_ma_vietqr(
+            bank_code=giao_dich["bank"],
+            account_no=giao_dich["account"],
+            amount=so_tien,
+            note=noi_dung,
+            save_path=duong_dan,
+        )
+        giao_dich["note"] = _chuan_hoa_noi_dung(noi_dung)
+        giao_dich["qr_image"] = qr_img
+        giao_dich["qr_path"] = duong_dan
+        ket_qua.append(giao_dich)
+
+    return ket_qua
+
+
+class PhienThanhToanTungNguoi:
+    """
+    Quản lý luồng quét QR lần lượt từng người:
+    Người 1 quét QR -> Bấm xác nhận xong -> Tự động chuyển sang QR của Người 2 -> ...
+    """
+
+    def __init__(self, settlements: list, output_dir: str = "exports/qr_thanh_toan"):
+        self.danh_sach = tao_qr_cho_tung_nguoi(settlements, output_dir=output_dir)
+        self.chi_so_hien_tai = 0
+        self._bo_qua_nguoi_da_tra()
+
+    def _bo_qua_nguoi_da_tra(self):
+        while (
+            self.chi_so_hien_tai < len(self.danh_sach)
+            and self.danh_sach[self.chi_so_hien_tai].get("status") == "Đã thanh toán"
+        ):
+            self.chi_so_hien_tai += 1
+
+    def lay_giao_dich_hien_tai(self) -> Optional[dict]:
+        """Lấy thông tin + ảnh QR của người đang cần chuyển tiền hiện tại."""
+        if self.chi_so_hien_tai >= len(self.danh_sach):
+            return None
+        gd = self.danh_sach[self.chi_so_hien_tai]
+        return {
+            "thu_tu": f"{self.chi_so_hien_tai + 1}/{len(self.danh_sach)}",
+            **gd,
+        }
+
+    def xac_nhan_va_sang_nguoi_tiep_theo(self) -> Optional[dict]:
+        """Đánh dấu người hiện tại đã chuyển xong và trả về QR của người tiếp theo."""
+        if self.chi_so_hien_tai < len(self.danh_sach):
+            self.danh_sach[self.chi_so_hien_tai]["status"] = "Đã thanh toán"
+            self.chi_so_hien_tai += 1
+            self._bo_qua_nguoi_da_tra()
+        return self.lay_giao_dich_hien_tai()
+
+    def da_hoan_tat_tat_ca(self) -> bool:
+        """Trả về True khi tất cả mọi người trong nhóm đã chuyển tiền xong."""
+        return self.chi_so_hien_tai >= len(self.danh_sach)
+
+
 # ==============================================================================
 # 2. MODULE XUẤT BÁO CÁO LỊCH SỬ CHI TIÊU & DANH SÁCH NỢ (CSV / EXCEL)
 # ==============================================================================
@@ -103,7 +179,7 @@ def xuat_bao_cao_csv(
     settlements: list,
     output_dir: str = "exports",
 ) -> tuple:
-    """Xuất lịch sử chi tiêu và danh sách nợ ra 2 file CSV (dùng thư viện csv)."""
+    """Xuất lịch sử chi tiêu và danh sách nợ ra 2 file CSV."""
     Path(output_dir).mkdir(parents=True, exist_ok=True)
     exp_path = f"{output_dir}/lich_su_chi_tieu.csv"
     set_path = f"{output_dir}/danh_sach_no.csv"
@@ -156,16 +232,16 @@ def xuat_bao_cao_excel(
 
 
 # ==============================================================================
-# 3. DỮ LIỆU MẪU DEMO (CHUYẾN DU LỊCH ĐÀ LẠT 3N2Đ CỦA NHÓM 5 NGƯỜI)
+# 3. DỮ LIỆU MẪU DEMO (CHUYẾN DU LỊCH ĐÀ LẠT 3N2Đ - DÙNG ĐÚNG 5 TÀI KHOẢN)
 # ==============================================================================
 MOCK_DATA = {
     "group_name": "Du lịch Đà Lạt 3 ngày 2 đêm",
     "members": [
-        {"name": "Kiên", "bank": "VCB", "account": "1012345678"},
-        {"name": "Lợi", "bank": "MB", "account": "0912345678"},
-        {"name": "Lương", "bank": "TCB", "account": "19034567890123"},
-        {"name": "Lộc", "bank": "ACB", "account": "88997766"},
-        {"name": "Thục", "bank": "BIDV", "account": "31410001234567"},
+        {"name": "Kiên", "bank": "TCB", "account": "2725102007"},
+        {"name": "Lợi", "bank": "ACB", "account": "40673317"},
+        {"name": "Lương", "bank": "TPB", "account": "71139791234"},
+        {"name": "Lộc", "bank": "MB", "account": "0767120559"},
+        {"name": "Thục", "bank": "TIMO", "account": "9021369617471"},
     ],
     "expenses": [
         {
@@ -211,26 +287,26 @@ MOCK_DATA = {
     ],
     "settlements": [
         {
-            "from_user": "Thục",
-            "to_user": "Kiên",
-            "bank": "VCB",
-            "account": "1012345678",
-            "amount": 1100000,
+            "from_user": "Lộc",
+            "to_user": "Lợi",
+            "bank": "ACB",
+            "account": "40673317",
+            "amount": 900000,
             "status": "Chưa thanh toán",
         },
         {
-            "from_user": "Lộc",
-            "to_user": "Lợi",
-            "bank": "MB",
-            "account": "0912345678",
-            "amount": 900000,
+            "from_user": "Thục",
+            "to_user": "Kiên",
+            "bank": "TCB",
+            "account": "2725102007",
+            "amount": 1100000,
             "status": "Chưa thanh toán",
         },
         {
             "from_user": "Lương",
             "to_user": "Lợi",
-            "bank": "MB",
-            "account": "0912345678",
+            "bank": "ACB",
+            "account": "40673317",
             "amount": 100000,
             "status": "Chưa thanh toán",
         },
@@ -239,7 +315,20 @@ MOCK_DATA = {
 
 
 if __name__ == "__main__":
-    tao_ma_vietqr("MB", "0912345678", 900000, "Loc tra tien Loi", "exports/demo_vietqr.png")
-    xuat_bao_cao_csv(MOCK_DATA["expenses"], MOCK_DATA["settlements"], "exports")
-    xuat_bao_cao_excel(MOCK_DATA["expenses"], MOCK_DATA["settlements"], "exports/bao_cao_chi_tieu.xlsx")
-    print("Da tao xong anh VietQR + file CSV + file Excel trong thu muc exports/!")
+    phien_qr = PhienThanhToanTungNguoi(MOCK_DATA["settlements"], output_dir="exports/qr_thanh_toan")
+
+    print("=== BAT DAU PHIEN THANH TOAN VIETQR TUNG NGUOI ===")
+    gd_hien_tai = phien_qr.lay_giao_dich_hien_tai()
+    while gd_hien_tai is not None:
+        print(
+            f"[{gd_hien_tai['thu_tu']}] {gd_hien_tai['from_user']} -> {gd_hien_tai['to_user']} "
+            f"({gd_hien_tai['bank']} - {gd_hien_tai['account']}) "
+            f"| So tien: {gd_hien_tai['amount']:,} VND "
+            f"| Anh QR: {gd_hien_tai['qr_path']}"
+        )
+        gd_hien_tai = phien_qr.xac_nhan_va_sang_nguoi_tiep_theo()
+
+    print("=== DA HOAN TAT THANH TOAN CHO TAT CA MOI NGUOI! ===")
+    xuat_bao_cao_csv(MOCK_DATA["expenses"], phien_qr.danh_sach, "exports")
+    xuat_bao_cao_excel(MOCK_DATA["expenses"], phien_qr.danh_sach, "exports/bao_cao_chi_tieu.xlsx")
+    print("Da xuat bao cao CSV va Excel trong thu muc exports/!")
