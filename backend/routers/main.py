@@ -1,29 +1,30 @@
-from fastapi import FastAPI
+﻿from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from database import engine, Base
-import items
+from .database import engine, Base
+from . import models
+from . import items
 
-# Tạo bảng trong CSDL nếu chưa có
+# Táº¡o báº£ng trong CSDL náº¿u chÆ°a cÃ³
 Base.metadata.create_all(bind=engine)
 
 app = FastAPI(
-    title="API Chủ Đề 13",
-    description="Backend Code by Lợi",
+    title="API Chá»§ Äá» 13",
+    description="Backend Code by Lá»£i",
     version="1.0.0"
 )
 
-# Cấu hình CORS cực kỳ quan trọng để Frontend (React/Vue/HTML) có thể gọi API mà không bị chặn
+# Cáº¥u hÃ¬nh CORS cá»±c ká»³ quan trá»ng Ä‘á»ƒ Frontend (React/Vue/HTML) cÃ³ thá»ƒ gá»i API mÃ  khÃ´ng bá»‹ cháº·n
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # Trong thực tế nên đổi thành URL của frontend (vd: http://localhost:3000)
+    allow_origins=["*"],  # Trong thá»±c táº¿ nÃªn Ä‘á»•i thÃ nh URL cá»§a frontend (vd: http://localhost:3000)
     allow_credentials=True,
-    allow_methods=["*"],  # Cho phép mọi phương thức GET, POST, PUT, DELETE
+    allow_methods=["*"],  # Cho phÃ©p má»i phÆ°Æ¡ng thá»©c GET, POST, PUT, DELETE
     allow_headers=["*"],
 )
 
-# Nhúng router của Lợi vào app chính
+# NhÃºng router cá»§a Lá»£i vÃ o app chÃ­nh
 app.include_router(items.router)
 
 @app.get("/")
 def root():
-    return {"message": "Server backend Chủ Đề 13 đang chạy mượt mà!"}
+    return {"message": "Server backend Chá»§ Äá» 13 Ä‘ang cháº¡y mÆ°á»£t mÃ !"}
