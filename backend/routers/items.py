@@ -1,13 +1,13 @@
-from fastapi import APIRouter, Depends, HTTPException, status
+﻿from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
 from sqlalchemy.exc import SQLAlchemyError
-import models
-import schemas
-from database import get_db
+from . import models
+from . import schemas
+from .database import get_db
 
 router = APIRouter(
     prefix="/api/items",
-    tags=["Items (Chủ đề 13)"]
+    tags=["Items (Chá»§ Ä‘á» 13)"]
 )
 
 @router.post("/", response_model=schemas.ItemResponse, status_code=status.HTTP_201_CREATED)
@@ -20,11 +20,11 @@ def create_item(item: schemas.ItemCreate, db: Session = Depends(get_db)):
         return new_item
     except SQLAlchemyError as e:
         db.rollback()
-        # Log lỗi ra console cho Dev, trả về lỗi 500 cho Frontend
+        # Log lá»—i ra console cho Dev, tráº£ vá» lá»—i 500 cho Frontend
         print(f"Database Error: {str(e)}")
-        raise HTTPException(status_code=500, detail="Lỗi hệ thống khi lưu dữ liệu.")
+        raise HTTPException(status_code=500, detail="Lá»—i há»‡ thá»‘ng khi lÆ°u dá»¯ liá»‡u.")
     except Exception as e:
-        raise HTTPException(status_code=500, detail="Đã xảy ra lỗi không xác định.")
+        raise HTTPException(status_code=500, detail="ÄÃ£ xáº£y ra lá»—i khÃ´ng xÃ¡c Ä‘á»‹nh.")
 
 @router.get("/", response_model=list[schemas.ItemResponse])
 def read_items(skip: int = 0, limit: int = 100, db: Session = Depends(get_db)):
@@ -32,24 +32,24 @@ def read_items(skip: int = 0, limit: int = 100, db: Session = Depends(get_db)):
         items = db.query(models.Item).offset(skip).limit(limit).all()
         return items
     except Exception:
-        raise HTTPException(status_code=500, detail="Không thể tải danh sách.")
+        raise HTTPException(status_code=500, detail="KhÃ´ng thá»ƒ táº£i danh sÃ¡ch.")
 
 @router.get("/{item_id}", response_model=schemas.ItemResponse)
 def read_item(item_id: int, db: Session = Depends(get_db)):
     item = db.query(models.Item).filter(models.Item.id == item_id).first()
     if not item:
-        raise HTTPException(status_code=404, detail=f"Không tìm thấy đối tượng với ID {item_id}")
+        raise HTTPException(status_code=404, detail=f"KhÃ´ng tÃ¬m tháº¥y Ä‘á»‘i tÆ°á»£ng vá»›i ID {item_id}")
     return item
 
 @router.delete("/{item_id}", status_code=status.HTTP_204_NO_CONTENT)
 def delete_item(item_id: int, db: Session = Depends(get_db)):
     item = db.query(models.Item).filter(models.Item.id == item_id).first()
     if not item:
-        raise HTTPException(status_code=404, detail="Đối tượng không tồn tại để xóa.")
+        raise HTTPException(status_code=404, detail="Äá»‘i tÆ°á»£ng khÃ´ng tá»“n táº¡i Ä‘á»ƒ xÃ³a.")
     
     try:
         db.delete(item)
         db.commit()
     except Exception:
         db.rollback()
-        raise HTTPException(status_code=500, detail="Lỗi khi xóa dữ liệu.")
+        raise HTTPException(status_code=500, detail="Lá»—i khi xÃ³a dá»¯ liá»‡u.")
