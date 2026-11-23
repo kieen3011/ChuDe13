@@ -1,5 +1,6 @@
 ﻿// ChuDe13 Group Expense Manager - Concurrency-Controlled Frontend (OCC)
-const API_BASE_URL = "http://127.0.0.1:8000";
+// The frontend and FastAPI app are deployed on the same HTTPS origin.
+const API_BASE_URL = "";
 const STORAGE_KEY = "chude13_web_groups_v1";
 const META_KEY = "chude13_sync_meta_v1";
 
@@ -33,12 +34,12 @@ let selectedGroupId = "";
 // Concurrency & Sync Architecture Variables
 let isBackendOnline = false;
 let confirmedServerVersion = 0; // Luôn lấy từ Backend, không tự ý tăng
-let syncMode = "local-only"; // "synced" | "saving" | "pending" | "error" | "local-only" | "conflict"
+let syncMode = "pending"; // "synced" | "saving" | "pending" | "error" | "local-only" | "conflict"
+let syncPreference = "auto"; // "auto" | "local-only"
 
 // Serialized Write Pipeline State
 let isPersisting = false;
 let pendingStateToPersist = null;
-let conflictDataHold = null; // Giữ server snapshot khi gặp 409
 
 // ==========================================
 // 1. HELPERS & LOCAL STORAGE UTILITIES
@@ -89,8 +90,11 @@ function loadSyncMetadata() {
     const meta = localStorage.getItem(META_KEY);
     if (meta) {
       const parsed = JSON.parse(meta);
-      confirmedServerVersion = typeof parsed.confirmedServerVersion === "number" ? parsed.confirmedServerVersion : 0;
-      syncMode = parsed.syncMode || "local-only";
+      confirmedServerVersion = Number.isInteger(parsed.confirmedServerVersion) && parsed.confirmedServerVersion >= 0
+        ? parsed.confirmedServerVersion
+        : 0;
+      syncMode = parsed.syncMode || "pending";
+      syncPreference = parsed.syncPreference === "local-only" ? "local-only" : "auto";
     }
   } catch (e) {
     console.warn("Không đọc được metadata đồng bộ:", e);
@@ -102,6 +106,7 @@ function saveSyncMetadata() {
     const meta = {
       confirmedServerVersion,
       syncMode,
+      syncPreference,
       updatedAt: new Date().toISOString()
     };
     localStorage.setItem(META_KEY, JSON.stringify(meta));
@@ -139,6 +144,10 @@ function updateSyncStatus(status, text) {
   saveSyncMetadata();
 
   const badge = document.getElementById("sync-status");
+  const enableSyncButton = document.getElementById("btn-enable-sync");
+  if (enableSyncButton) {
+    enableSyncButton.classList.toggle("hidden", syncPreference !== "local-only");
+  }
   if (!badge) return;
 
   badge.className = "sync-status-badge";
@@ -162,17 +171,31 @@ function updateSyncStatus(status, text) {
   }
 }
 
+function stableObject(value) {
+  if (Array.isArray(value)) return value.map(stableObject);
+  if (value && typeof value === "object") {
+    return Object.fromEntries(
+      Object.keys(value)
+        .sort()
+        .map((key) => [key, stableObject(value[key])])
+    );
+  }
+  return value;
+}
+
 // Deep comparison so sánh cấu trúc dữ liệu không phụ thuộc thứ tự key
 function areGroupsEqual(a, b) {
   if (!Array.isArray(a) || !Array.isArray(b)) return false;
   if (a.length !== b.length) return false;
 
   const normalizeGroup = (g) => ({
+    ...g,
     id: g.id,
     name: g.name,
     members: [...(g.members || [])].sort(),
     balances: g.balances || {},
     expenses: (g.expenses || []).map((e) => ({
+      ...e,
       title: e.title,
       amount: e.amount,
       payer: e.payer,
@@ -182,7 +205,17 @@ function areGroupsEqual(a, b) {
 
   const normA = a.map(normalizeGroup).sort((x, y) => x.id.localeCompare(y.id));
   const normB = b.map(normalizeGroup).sort((x, y) => x.id.localeCompare(y.id));
-  return JSON.stringify(normA) === JSON.stringify(normB);
+  return JSON.stringify(stableObject(normA)) === JSON.stringify(stableObject(normB));
+}
+
+async function fetchWithTimeout(url, options = {}) {
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), 10000);
+  try {
+    return await fetch(url, { ...options, signal: controller.signal });
+  } finally {
+    clearTimeout(timeoutId);
+  }
 }
 
 // ==========================================
@@ -191,7 +224,7 @@ function areGroupsEqual(a, b) {
 
 async function fetchBackendState() {
   try {
-    const res = await fetch(`${API_BASE_URL}/api/demo/state`, {
+    const res = await fetchWithTimeout(`${API_BASE_URL}/api/demo/state`, {
       method: "GET",
       headers: { "Accept": "application/json" }
     });
@@ -203,7 +236,8 @@ async function fetchBackendState() {
         data: body.data?.groups || []
       };
     } else {
-      return { success: false, status: res.status };
+      const errorBody = await res.json().catch(() => ({}));
+      return { success: false, status: res.status, detail: errorBody.detail };
     }
   } catch (err) {
     return { success: false, error: err.message };
@@ -218,7 +252,7 @@ async function putBackendStateWithVersion(groupsToSave, expectedVersion) {
         groups: groupsToSave
       }
     };
-    const res = await fetch(`${API_BASE_URL}/api/demo/state`, {
+    const res = await fetchWithTimeout(`${API_BASE_URL}/api/demo/state`, {
       method: "PUT",
       headers: {
         "Content-Type": "application/json",
@@ -243,7 +277,8 @@ async function putBackendStateWithVersion(groupsToSave, expectedVersion) {
         detail: errBody.detail || {}
       };
     } else {
-      return { success: false, status: res.status };
+      const errorBody = await res.json().catch(() => ({}));
+      return { success: false, status: res.status, detail: errorBody.detail };
     }
   } catch (err) {
     return { success: false, status: 0, error: err.message };
@@ -287,6 +322,7 @@ async function processPersistQueue() {
   pendingStateToPersist = null; // lấy ra gửi
 
   const res = await putBackendStateWithVersion(stateToSend, confirmedServerVersion);
+  let continuePipeline = false;
 
   if (res.success && res.status === 200) {
     // Thành công: Cập nhật phiên bản máy chủ đã xác nhận
@@ -297,26 +333,36 @@ async function processPersistQueue() {
     if (!pendingStateToPersist) {
       updateSyncStatus("synced", `Đã lưu máy chủ (v${confirmedServerVersion})`);
     }
+    continuePipeline = Boolean(pendingStateToPersist);
   } else if (res.status === 409) {
     // Xung đột phiên bản Optimistic Concurrency Control
     console.warn("Phát hiện xung đột phiên bản 409 Conflict:", res.detail);
     updateSyncStatus("conflict", "Xung đột dữ liệu với thiết bị khác!");
 
-    // Tạm dừng gửi các snapshot tiếp theo
+    // Preserve the newest local snapshot. A mutation may have arrived while
+    // this request was in flight, so stateToSend is not necessarily current.
+    const latestLocalGroups = pendingStateToPersist
+      || parseLocalGroups()
+      || stateToSend;
     pendingStateToPersist = null;
 
     // Lấy trạng thái mới nhất từ server và hiển thị giao diện giải quyết xung đột
-    await handleVersionConflict(stateToSend);
+    await handleVersionConflict(structuredClone(latestLocalGroups));
   } else {
     // Lỗi mạng hoặc 500
     console.error("Lỗi khi gửi PUT /api/demo/state:", res);
-    updateSyncStatus("error", "Lỗi lưu máy chủ - Dữ liệu an toàn ở Local");
+    // Keep the latest unsaved snapshot for a later explicit/online retry.
+    pendingStateToPersist = pendingStateToPersist || stateToSend;
+    const errorLabel = res.status === 422
+      ? "Dữ liệu không hợp lệ (HTTP 422) - Đã giữ ở Local"
+      : `Lỗi lưu máy chủ${res.status ? ` (HTTP ${res.status})` : ""} - Dữ liệu an toàn ở Local`;
+    updateSyncStatus("error", errorLabel);
   }
 
   isPersisting = false;
 
   // Nếu có mutation mới trong khi gửi và không bị conflict -> tiếp tục gửi
-  if (pendingStateToPersist && syncMode !== "conflict") {
+  if (continuePipeline && pendingStateToPersist && syncMode !== "conflict") {
     processPersistQueue();
   }
 }
@@ -342,6 +388,7 @@ async function handleVersionConflict(localAttemptedGroups) {
         label: "1. Sử dụng dữ liệu mới từ Máy chủ (Khuyến nghị)",
         desc: `Tạo bản sao lưu dữ liệu hiện tại và cập nhật dữ liệu phiên bản v${currentServerVersion} từ máy chủ.`,
         onClick: () => {
+          syncPreference = "auto";
           const backup = createVerifiedBackup();
           if (!backup.success) {
             alert(`Không thể sao lưu: ${backup.error}. Hủy thao tác.`);
@@ -361,6 +408,7 @@ async function handleVersionConflict(localAttemptedGroups) {
         label: "2. Ghi đè Máy chủ bằng dữ liệu hiện tại của bạn",
         desc: `Lấy phiên bản v${currentServerVersion} làm mốc và đẩy toàn bộ dữ liệu của bạn lên máy chủ.`,
         onClick: async () => {
+          syncPreference = "auto";
           const backup = createVerifiedBackup();
           if (!backup.success) {
             alert(`Không thể sao lưu: ${backup.error}. Hủy thao tác.`);
@@ -393,6 +441,7 @@ async function handleVersionConflict(localAttemptedGroups) {
         label: "3. Giữ nguyên trên Trình duyệt (Chuyển sang Cục bộ)",
         desc: "Không gửi dữ liệu lên máy chủ nữa, giữ nguyên trạng thái làm việc offline.",
         onClick: () => {
+          syncPreference = "local-only";
           syncMode = "local-only";
           saveSyncMetadata();
           updateSyncStatus("local-only", "Chế độ Cục bộ (Đã tắt đồng bộ)");
@@ -442,7 +491,7 @@ async function handleStartupResolution() {
   loadSyncMetadata();
 
   const localGroups = parseLocalGroups();
-  const hasLocalData = Array.isArray(localGroups) && localGroups.length > 0;
+  const hasLocalSnapshot = Array.isArray(localGroups);
 
   // Kiểm tra Backend
   const backendRes = await fetchBackendState();
@@ -455,7 +504,7 @@ async function handleStartupResolution() {
     pill.className = "status-pill offline";
     updateSyncStatus("local-only", "Chế độ Cục bộ (Máy chủ offline)");
 
-    groups = hasLocalData ? localGroups : [];
+    groups = hasLocalSnapshot ? localGroups : [];
     selectedGroupId = groups[0]?.id || "";
     renderAll();
     return;
@@ -463,15 +512,15 @@ async function handleStartupResolution() {
 
   // Backend online
   isBackendOnline = true;
-  pill.textContent = "Đã nối FastAPI :8000";
+  pill.textContent = "Đã kết nối FastAPI";
   pill.className = "status-pill online";
 
   const backendGroups = backendRes.data;
   const currentServerVer = backendRes.version;
-  const hasBackendData = Array.isArray(backendGroups) && backendGroups.length > 0;
+  const serverHasRecord = currentServerVer > 0;
 
   // Nếu người dùng trước đó đã chọn local-only một cách chủ động
-  if (syncMode === "local-only" && hasLocalData) {
+  if (syncPreference === "local-only" && hasLocalSnapshot) {
     groups = localGroups;
     selectedGroupId = groups[0]?.id || "";
     updateSyncStatus("local-only", "Chế độ Cục bộ (Tùy chọn đã lưu)");
@@ -480,8 +529,8 @@ async function handleStartupResolution() {
   }
 
   // Case 1: Cả 2 đều rỗng (Database chưa có bản ghi, version = 0)
-  if (!hasBackendData && !hasLocalData) {
-    groups = [];
+  if (!serverHasRecord && (!hasLocalSnapshot || localGroups.length === 0)) {
+    groups = hasLocalSnapshot ? localGroups : [];
     selectedGroupId = "";
     confirmedServerVersion = currentServerVer;
     syncMode = "synced";
@@ -491,7 +540,7 @@ async function handleStartupResolution() {
   }
 
   // Case 2: Backend rỗng (version 0), Local có dữ liệu -> Hỏi import
-  if (!hasBackendData && hasLocalData) {
+  if (!serverHasRecord && hasLocalSnapshot && localGroups.length > 0) {
     showConflictModal({
       title: "Di chuyển dữ liệu lên Máy chủ",
       desc: `Phát hiện ${localGroups.length} nhóm dữ liệu có sẵn trên trình duyệt nhưng máy chủ Neon hiện đang trống. Bạn có muốn tải dữ liệu này lên máy chủ không?`,
@@ -500,6 +549,7 @@ async function handleStartupResolution() {
           label: "1. Tải dữ liệu lên Máy chủ (Khuyến nghị)",
           desc: "Tạo bản sao lưu và lưu toàn bộ dữ liệu này vào Neon PostgreSQL.",
           onClick: async () => {
+            syncPreference = "auto";
             const backup = createVerifiedBackup();
             if (!backup.success) {
               alert(`Không thể tạo sao lưu: ${backup.error}. Hủy thao tác.`);
@@ -531,6 +581,7 @@ async function handleStartupResolution() {
           label: "2. Giữ nguyên trên Trình duyệt (Chế độ Cục bộ)",
           desc: "Chỉ hiển thị dữ liệu cục bộ, không ghi vào cơ sở dữ liệu máy chủ.",
           onClick: () => {
+            syncPreference = "local-only";
             groups = localGroups;
             selectedGroupId = groups[0]?.id || "";
             syncMode = "local-only";
@@ -545,7 +596,7 @@ async function handleStartupResolution() {
   }
 
   // Case 3: Backend có dữ liệu, Local rỗng -> Khôi phục từ Backend
-  if (hasBackendData && !hasLocalData) {
+  if (serverHasRecord && !hasLocalSnapshot) {
     groups = backendGroups;
     confirmedServerVersion = currentServerVer;
     syncMode = "synced";
@@ -558,7 +609,7 @@ async function handleStartupResolution() {
   }
 
   // Case 4: Cả 2 có dữ liệu và GIỐNG HỆT NHAU
-  if (hasBackendData && hasLocalData && areGroupsEqual(backendGroups, localGroups)) {
+  if (serverHasRecord && hasLocalSnapshot && areGroupsEqual(backendGroups, localGroups)) {
     groups = backendGroups;
     confirmedServerVersion = currentServerVer;
     syncMode = "synced";
@@ -570,7 +621,7 @@ async function handleStartupResolution() {
   }
 
   // Case 5: Cả 2 có dữ liệu nhưng KHÁC NHAU
-  if (hasBackendData && hasLocalData && !areGroupsEqual(backendGroups, localGroups)) {
+  if (serverHasRecord && hasLocalSnapshot && !areGroupsEqual(backendGroups, localGroups)) {
     showConflictModal({
       title: "Xung đột dữ liệu ban đầu",
       desc: `Dữ liệu trên máy chủ Neon (v${currentServerVer}) khác với dữ liệu đang lưu trong trình duyệt của bạn. Hãy chọn nguồn dữ liệu bạn muốn sử dụng:`,
@@ -579,6 +630,7 @@ async function handleStartupResolution() {
           label: "1. Sử dụng dữ liệu từ Máy chủ (Khuyến nghị)",
           desc: "Tạo bản sao lưu dữ liệu trình duyệt và nạp dữ liệu máy chủ vào màn hình.",
           onClick: () => {
+            syncPreference = "auto";
             const backup = createVerifiedBackup();
             if (!backup.success) {
               alert(`Không thể sao lưu: ${backup.error}. Hủy thao tác.`);
@@ -598,6 +650,7 @@ async function handleStartupResolution() {
           label: "2. Ghi đè Máy chủ bằng dữ liệu Trình duyệt",
           desc: `Tạo bản sao lưu và cập nhật dữ liệu của bạn lên máy chủ (đè lên v${currentServerVer}).`,
           onClick: async () => {
+            syncPreference = "auto";
             const backup = createVerifiedBackup();
             if (!backup.success) {
               alert(`Không thể sao lưu: ${backup.error}. Hủy thao tác.`);
@@ -625,6 +678,7 @@ async function handleStartupResolution() {
           label: "3. Giữ nguyên trên Trình duyệt (Chế độ Cục bộ)",
           desc: "Không thay đổi máy chủ, chuyển sang chế độ làm việc cục bộ an toàn.",
           onClick: () => {
+            syncPreference = "local-only";
             groups = localGroups;
             selectedGroupId = groups[0]?.id || "";
             syncMode = "local-only";
@@ -977,11 +1031,29 @@ function renderAll() {
 // 6. INITIALIZATION & EVENT LISTENERS
 // ==========================================
 
-document.addEventListener("DOMContentLoaded", () => {
-  handleStartupResolution();
+document.addEventListener("DOMContentLoaded", async () => {
+  // Do not accept mutations until server/local reconciliation has completed.
+  await handleStartupResolution();
 
   document.querySelectorAll(".nav-btn").forEach((btn) => {
     btn.addEventListener("click", () => switchView(btn.dataset.view));
+  });
+
+  document.getElementById("btn-enable-sync").addEventListener("click", async () => {
+    syncPreference = "auto";
+    syncMode = "pending";
+    saveSyncMetadata();
+    await handleStartupResolution();
+  });
+
+  window.addEventListener("online", async () => {
+    if (syncPreference !== "auto") return;
+    if (pendingStateToPersist) {
+      isBackendOnline = true;
+      await processPersistQueue();
+    } else {
+      await handleStartupResolution();
+    }
   });
 
   // Tạo nhóm mới (Mutation Point 1)
@@ -1081,11 +1153,7 @@ document.addEventListener("DOMContentLoaded", () => {
   const resetDesc = document.getElementById("reset-modal-desc");
 
   document.getElementById("btn-reset-demo").addEventListener("click", () => {
-    if (isBackendOnline && syncMode !== "local-only") {
-      resetDesc.textContent = `Thao tác này sẽ khôi phục dữ liệu mẫu mặc định trên CẢ Máy chủ Neon (phiên bản tiếp theo) và Trình duyệt của bạn. Bản sao lưu dữ liệu hiện tại sẽ được lưu an toàn.`;
-    } else {
-      resetDesc.textContent = "Bạn đang ở Chế độ Cục bộ hoặc Máy chủ ngoại tuyến. Thao tác này sẽ khôi phục dữ liệu mẫu CHỈ trên Trình duyệt này (Cục bộ). Bản sao lưu dữ liệu hiện tại sẽ được lưu an toàn.";
-    }
+    resetDesc.textContent = "Thao tác này chỉ khôi phục dữ liệu mẫu trên Trình duyệt và chuyển sang Chế độ Cục bộ; dữ liệu Neon sẽ không bị thay đổi. Bản sao lưu dữ liệu hiện tại sẽ được lưu an toàn.";
     resetModal.classList.remove("hidden");
   });
 
@@ -1105,19 +1173,15 @@ document.addEventListener("DOMContentLoaded", () => {
 
     const resetData = structuredClone(DEFAULT_GROUPS);
 
-    if (isBackendOnline && syncMode !== "local-only") {
-      // Đưa qua pipeline lưu OCC duy nhất
-      groups = resetData;
-      selectedGroupId = groups[0].id;
-      enqueuePersist(groups);
-      renderAll();
-    } else {
-      // Offline hoặc Local-Only reset
-      groups = resetData;
-      selectedGroupId = groups[0].id;
-      writeLocalStorage(groups);
-      updateSyncStatus("local-only", "Đã khôi phục dữ liệu mẫu (Cục bộ)");
-      renderAll();
-    }
+    // Reset is deliberately local-only so a demo action can never overwrite
+    // a shared Neon record. Users can re-enable sync and resolve the resulting
+    // difference explicitly after reviewing both snapshots.
+    groups = resetData;
+    selectedGroupId = groups[0].id;
+    syncPreference = "local-only";
+    pendingStateToPersist = null;
+    writeLocalStorage(groups);
+    updateSyncStatus("local-only", "Đã khôi phục dữ liệu mẫu (chỉ Cục bộ)");
+    renderAll();
   });
 });

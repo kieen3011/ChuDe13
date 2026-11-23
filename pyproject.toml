@@ -1,2 +1,19 @@
-﻿[tool.vercel]
+[project]
+name = "chude13"
+version = "1.0.0"
+requires-python = ">=3.12,<3.14"
+dependencies = [
+    "fastapi==0.165.0",
+    "psycopg[binary]==3.3.9",
+    "pydantic==2.14.4",
+    "python-dotenv==1.2.4",
+    "sqlalchemy==2.0.58",
+    "uvicorn==0.54.0",
+]
+
+[tool.vercel]
 entrypoint = "backend.routers.main:app"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = ["test_*.py"]
