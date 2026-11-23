@@ -1,30 +1,58 @@
 ﻿from fastapi import FastAPI
+import os
+from contextlib import asynccontextmanager
+from pathlib import Path
+
+from fastapi import Depends
 from fastapi.middleware.cors import CORSMiddleware
-from .database import engine, Base
+from sqlalchemy import text
+from sqlalchemy.orm import Session
+
+from .database import Base, engine, get_db
 from . import models
 from . import items
+from . import demo
 
-# Táº¡o báº£ng trong CSDL náº¿u chÆ°a cÃ³
-Base.metadata.create_all(bind=engine)
+@asynccontextmanager
+async def lifespan(_: FastAPI):
+    # create_all only creates missing tables; it never drops or truncates data.
+    Base.metadata.create_all(bind=engine)
+    yield
 
 app = FastAPI(
-    title="API Chá»§ Äá» 13",
-    description="Backend Code by Lá»£i",
-    version="1.0.0"
+    title="API Chủ Đề 13",
+    description="Backend Code by Lợi - Chủ đề 13",
+    version="1.0.0",
+    lifespan=lifespan,
 )
 
-# Cáº¥u hÃ¬nh CORS cá»±c ká»³ quan trá»ng Ä‘á»ƒ Frontend (React/Vue/HTML) cÃ³ thá»ƒ gá»i API mÃ  khÃ´ng bá»‹ cháº·n
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],  # Trong thá»±c táº¿ nÃªn Ä‘á»•i thÃ nh URL cá»§a frontend (vd: http://localhost:3000)
-    allow_credentials=True,
-    allow_methods=["*"],  # Cho phÃ©p má»i phÆ°Æ¡ng thá»©c GET, POST, PUT, DELETE
-    allow_headers=["*"],
-)
+# Same-origin deployment needs no CORS. Explicit origins can be enabled for a
+# separately hosted frontend with CORS_ORIGINS=https://example.vercel.app,...
+cors_origins = [
+    origin.strip()
+    for origin in os.getenv("CORS_ORIGINS", "").split(",")
+    if origin.strip()
+]
+if cors_origins:
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=cors_origins,
+        allow_credentials=False,
+        allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+        allow_headers=["Content-Type", "Accept"],
+    )
 
-# NhÃºng router cá»§a Lá»£i vÃ o app chÃ­nh
+# Nhúng các router vào app chính
 app.include_router(items.router)
+app.include_router(demo.router)
 
-@app.get("/")
-def root():
-    return {"message": "Server backend Chá»§ Äá» 13 Ä‘ang cháº¡y mÆ°á»£t mÃ !"}
+@app.get("/api/health", tags=["Health"])
+def health(db: Session = Depends(get_db)):
+    db.execute(text("SELECT 1"))
+    return {"status": "ok"}
+
+
+# Register the frontend last. FastAPI checks normal API routes before frontend
+# files, and pyproject.toml keeps this frontend inside the Vercel Function.
+frontend_dir = Path(__file__).resolve().parents[2] / "frontend"
+app.frontend("/", directory=frontend_dir, fallback=None)
