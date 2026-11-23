@@ -5,7 +5,6 @@ from pathlib import Path
 
 from fastapi import Depends
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.staticfiles import StaticFiles
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
@@ -53,7 +52,7 @@ def health(db: Session = Depends(get_db)):
     return {"status": "ok"}
 
 
-# Mount last so API routes keep precedence. Vercel's FastAPI runtime promotes
-# StaticFiles assets to its CDN while preserving these route semantics.
+# Register the frontend last. FastAPI checks normal API routes before frontend
+# files, and pyproject.toml keeps this frontend inside the Vercel Function.
 frontend_dir = Path(__file__).resolve().parents[2] / "frontend"
-app.mount("/", StaticFiles(directory=frontend_dir, html=True), name="frontend")
+app.frontend("/", directory=frontend_dir, fallback=None)

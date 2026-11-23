@@ -1,5 +1,7 @@
 import os
 import asyncio
+from pathlib import Path
+import tomllib
 
 os.environ["DATABASE_URL"] = "sqlite+pysqlite:///:memory:"
 os.environ.pop("CORS_ORIGINS", None)
@@ -82,6 +84,25 @@ def test_frontend_and_assets_are_served_from_same_app(client):
     assert 'const API_BASE_URL = ""' in script.text
     assert "127.0.0.1" not in script.text
     assert stylesheet.status_code == 200
+
+
+def test_vercel_uses_one_custom_entrypoint_and_keeps_routing_in_fastapi():
+    project_root = Path(__file__).resolve().parents[1]
+    config = tomllib.loads((project_root / "pyproject.toml").read_text(encoding="utf-8"))
+
+    assert config["tool"]["vercel"]["entrypoint"] == "backend.routers.main:app"
+    assert config["tool"]["vercel"]["fastapi"]["static"]["cdn"] is False
+    assert not (project_root / "index.py").exists()
+
+
+def test_openapi_exposes_public_api_routes(client):
+    response = client.get("/openapi.json")
+
+    assert response.status_code == 200
+    paths = response.json()["paths"]
+    assert "/api/health" in paths
+    assert "/api/demo/state" in paths
+    assert "/api/items/" in paths
 
 
 def test_health_and_existing_items_route_are_preserved(client):
