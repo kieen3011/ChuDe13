@@ -1,0 +1,195 @@
+﻿<!DOCTYPE html>
+<html lang="vi">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Chủ Đề 13 — Quản lý Chi tiêu Nhóm</title>
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <div class="app-layout">
+    <!-- Sidebar điều hướng -->
+    <aside class="sidebar">
+      <div class="brand">
+        <span class="brand-badge">CĐ13</span>
+        <div>
+          <h1>CHỦ ĐỀ 13</h1>
+          <p>Chia tiền & Tối ưu nợ</p>
+        </div>
+      </div>
+
+      <nav class="nav-menu">
+        <button class="nav-btn active" data-view="dashboard">📊 Dashboard</button>
+        <button class="nav-btn" data-view="expense">🧾 Nhập hóa đơn</button>
+        <button class="nav-btn" data-view="settlement">💵 Tối ưu nợ</button>
+      </nav>
+
+      <div class="sidebar-footer">
+        <span id="backend-status" class="status-pill offline">Đang kiểm tra kết nối...</span>
+        <span id="sync-status" class="sync-status-badge">Chờ đồng bộ...</span>
+        <button id="btn-reset-demo" class="btn-link">Khôi phục dữ liệu mẫu</button>
+      </div>
+    </aside>
+
+    <!-- Nội dung chính -->
+    <main class="main-content">
+      <!-- VIEW 1: DASHBOARD -->
+      <section id="view-dashboard" class="view active">
+        <div class="dashboard-grid">
+          <!-- Cột danh sách nhóm -->
+          <div class="card group-panel">
+            <h2>Danh sách nhóm</h2>
+            <div id="group-list" class="group-list"></div>
+
+            <form id="create-group-form" class="create-group-box">
+              <h3>+ Tạo nhóm mới</h3>
+              <input type="text" id="new-group-name" placeholder="Tên nhóm (VD: Du lịch Đà Lạt)" required />
+              <input type="text" id="new-group-members" placeholder="Thành viên (cách nhau dấu phẩy)" required />
+              <button type="submit" class="btn btn-primary full-width">Tạo nhóm</button>
+            </form>
+          </div>
+
+          <!-- Cột chi tiết nhóm -->
+          <div class="card detail-panel">
+            <div class="panel-header">
+              <div>
+                <h2 id="dash-group-title">Nhóm: -</h2>
+                <p id="dash-group-members" class="muted-text">Thành viên: -</p>
+              </div>
+              <div class="header-actions">
+                <button class="btn btn-primary" onclick="switchView('expense')">+ Hóa đơn</button>
+                <button class="btn btn-success" onclick="switchView('settlement')">Tối ưu nợ →</button>
+              </div>
+            </div>
+
+            <h3>Bảng tổng hợp tình trạng nợ</h3>
+            <div class="table-wrap">
+              <table>
+                <thead>
+                  <tr>
+                    <th>Thành viên</th>
+                    <th>Số dư ròng</th>
+                    <th>Tình trạng</th>
+                  </tr>
+                </thead>
+                <tbody id="balance-table-body"></tbody>
+              </table>
+            </div>
+
+            <h3 class="mt-20">Lịch sử khoản chi gần đây</h3>
+            <div id="expense-history-list" class="history-list"></div>
+          </div>
+        </div>
+      </section>
+
+      <!-- VIEW 2: NHẬP HÓA ĐƠN -->
+      <section id="view-expense" class="view">
+        <div class="card form-card">
+          <div class="panel-header">
+            <h2>Nhập hóa đơn chi tiêu</h2>
+            <button class="btn btn-secondary" onclick="switchView('dashboard')">← Dashboard</button>
+          </div>
+
+          <form id="expense-form">
+            <div class="form-group">
+              <label for="exp-group">Nhóm</label>
+              <select id="exp-group"></select>
+            </div>
+
+            <div class="form-group">
+              <label for="exp-title">Tên khoản chi</label>
+              <input type="text" id="exp-title" placeholder="VD: Ăn trưa, Cà phê, Vé xe..." required />
+            </div>
+
+            <div class="form-row">
+              <div class="form-group">
+                <label for="exp-amount">Số tiền (VND)</label>
+                <input type="number" id="exp-amount" min="1000" step="1000" placeholder="VD: 250000" required />
+              </div>
+
+              <div class="form-group">
+                <label for="exp-payer">Người trả tiền</label>
+                <select id="exp-payer"></select>
+              </div>
+            </div>
+
+            <div class="form-group">
+              <div class="label-row">
+                <label>Thành viên chia tiền</label>
+                <button type="button" id="btn-toggle-all" class="btn-link">Chọn / Bỏ chọn tất cả</button>
+              </div>
+              <div id="exp-participants" class="checkbox-grid"></div>
+            </div>
+
+            <p id="exp-message" class="form-msg"></p>
+
+            <div class="form-actions">
+              <button type="button" class="btn btn-secondary" onclick="switchView('dashboard')">Hủy</button>
+              <button type="submit" class="btn btn-primary">Lưu hóa đơn</button>
+            </div>
+          </form>
+        </div>
+      </section>
+
+      <!-- VIEW 3: TỐI ƯU NỢ -->
+      <section id="view-settlement" class="view">
+        <div class="card">
+          <div class="panel-header">
+            <div>
+              <h2 id="settle-title">Kết quả tối ưu nợ</h2>
+              <p class="muted-text">Tự động rút gọn số lượt chuyển khoản ít nhất giữa các thành viên</p>
+            </div>
+            <button class="btn btn-secondary" onclick="switchView('dashboard')">← Dashboard</button>
+          </div>
+
+          <div id="settlement-list" class="settlement-list"></div>
+
+          <div class="settlement-footer">
+            <span id="settle-status" class="muted-text">Bấm VietQR ở từng dòng để xem mã chuyển khoản hoặc xuất file báo cáo.</span>
+            <div class="header-actions">
+              <button id="btn-export-csv" class="btn btn-secondary">Xuất CSV</button>
+              <button id="btn-export-excel" class="btn btn-primary">Xuất Excel (.xls)</button>
+            </div>
+          </div>
+        </div>
+      </section>
+    </main>
+  </div>
+
+  <!-- Modal hiển thị VietQR -->
+  <div id="qr-modal" class="modal hidden">
+    <div class="modal-box">
+      <h3>Mã thanh toán VietQR</h3>
+      <p id="qr-info" class="qr-info-text"></p>
+      <img id="qr-image" alt="Mã VietQR" />
+      <p class="muted-text small">Quét bằng ứng dụng ngân hàng bất kỳ (Nội dung đã điền sẵn)</p>
+      <button id="btn-close-qr" class="btn btn-primary full-width">Đóng</button>
+    </div>
+  </div>
+
+  <!-- Modal Xử lý Di chuyển & Xung đột dữ liệu (Conflict & Migration Modal) -->
+  <div id="conflict-modal" class="modal hidden">
+    <div class="modal-box modal-wide">
+      <h3 id="conflict-modal-title">Xử lý dữ liệu ban đầu</h3>
+      <p id="conflict-modal-desc" class="muted-text" style="text-align: left;"></p>
+      <div id="conflict-actions" class="conflict-actions">
+        <!-- Nút hành động sẽ được chèn động từ app.js -->
+      </div>
+    </div>
+  </div>
+
+  <!-- Modal Xác nhận Khôi phục dữ liệu mẫu (Reset Modal) -->
+  <div id="reset-confirm-modal" class="modal hidden">
+    <div class="modal-box">
+      <h3>Xác nhận khôi phục dữ liệu mẫu</h3>
+      <p id="reset-modal-desc" class="muted-text" style="text-align: left;"></p>
+      <div class="form-actions" style="justify-content: center; margin-top: 16px;">
+        <button id="btn-cancel-reset" class="btn btn-secondary">Hủy bỏ</button>
+        <button id="btn-confirm-reset" class="btn btn-primary">Xác nhận khôi phục</button>
+      </div>
+    </div>
+  </div>
+
+  <script src="app.js"></script>
+</body>
+</html>
